@@ -74,6 +74,7 @@ pub fn bootstrap_mean(sample: Vec<f64>) -> Vec<f64>{
     let arc_sample: Arc<Vec<f64>> = Arc::from(sample);
     let bs_distribution = Arc::from(Mutex::from(Vec::<f64>::new()));
     let mut threads: Vec<JoinHandle<()>> = Vec::new();
+
     for _ in 0 .. max(arc_sample.len() % BS_DATA_PER_THREAD, 10){
         let temp_sample: Arc<Vec<f64>> = arc_sample.clone();
         let temp_bs_distribution = bs_distribution.clone();
@@ -105,40 +106,3 @@ pub fn bootstrap_mean(sample: Vec<f64>) -> Vec<f64>{
     }
 }
 
-pub fn test() {
-    let items = Arc::from(Mutex::new(vec!(1,2,3,4)));
-    let mut items1 = items.clone();
-    let child = spawn(move || {
-        match items.lock(){
-            Ok(mut item_vec) => {
-                item_vec.push(5);
-            },
-            Err(_) => println!("poisoned child")
-        }
-    });
-
-    match items1.lock(){
-        Ok(mut item_vec) => {
-            item_vec.push(6);
-            println!("main: {:?}", item_vec);
-        },
-        Err(_) => println!("poisoned main")
-    };
-
-    match child.join(){
-        Ok(_) => {
-            println!("threads joined: {:?}", Arc::get_mut(&mut items1).unwrap().get_mut().unwrap());
-        },
-        Err(_) => {
-            println!("child panicked");
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_test() {
-        crate::test();
-    }
-}
