@@ -16,3 +16,10 @@ fn test_get_sample_large() {
    assert_eq!(sample[0], 33.0);
    assert_eq!(sample[sample.len() - 1], 961.0);
 }
+
+#[test]
+fn test_bootstrap_mean() {
+   let mut test = File::open("C:/Users/caleb/Documents/Projects/bootstrap/tests/test_sample3.txt").unwrap();
+   let bs_dist = bootstrap::bootstrap_mean(bootstrap::get_sample(&mut test).unwrap());
+   println!("size: {}, first: {}, last: {}", bs_dist.len(), bs_dist[0], bs_dist[bs_dist.len() - 1]);
+}
