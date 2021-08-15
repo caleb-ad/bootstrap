@@ -26,30 +26,43 @@ macro_rules! utf8_to_f64 {
     ($utf8_slice:expr) => {
         match str::from_utf8($utf8_slice){
             Ok(data_str) => match data_str.parse::<f64>(){
-                Ok(data) => data,
-                Err(_) => return Err("data not parsable as f64")
+                Ok(data) => Ok(data),
+                Err(_) => Err("data not parsable as f64")
             },
-            Err(_) => return Err("expected utf-8")
+            Err(_) => Err("expected utf-8")
         }
     };
 }
 
+pub enum BS_Error{
+    None,
+    DatumDropped
+}
+
 /// expects data interpretable as a floating point number and seperated
-/// by any number of spaces, commas, newlines, or carriage returns
-pub fn get_sample<R: Read>(source:&mut R) -> Result<Vec<f64>, &'static str>
+/// by any number of spaces, commas, newlines, or carriage returns.
+/// According to the rust docs every call to Read::read can result in a system
+/// call. Two buffers are used to avoid this.
+/// When an invalid datum is encountered, it is dropped, parsing continues, err
+/// is set
+pub fn get_sample<R: Read>(source:&mut R, err:&mut BS_Error) -> Result<Vec<f64>, &'static str>
 {
     let mut sample: Vec<f64> = Vec::new();
     let mut buf: [u8; BS_BUFSIZE] = [0 as u8; BS_BUFSIZE];
     let mut data: [u8; BS_DATASIZE] = [0 as u8; BS_DATASIZE];
     let mut didx: usize = 0;
+    *err = BS_Error::None;
     loop{ match source.read(&mut buf){
         Ok(n) => {
             if n == 0 { break; } // EOF
             let mut m: usize = 0;
             while m < n { match buf[m]{
                 b' ' | b',' | b'\n' | b'\r' => {
-                    if didx > 0{
-                        sample.push(utf8_to_f64!(& data[0 .. didx]));
+                    if didx > 0 {
+                        match utf8_to_f64!(& data[0 .. didx]){
+                            Ok(datum) => sample.push(datum),
+                            Err(_) => *err = BS_Error::DatumDropped, // drop data point
+                        }
                         didx = 0;
                     }
                 },
@@ -65,7 +78,10 @@ pub fn get_sample<R: Read>(source:&mut R) -> Result<Vec<f64>, &'static str>
         }
     } }
     if didx > 0 {
-        sample.push(utf8_to_f64!(& data[0 .. didx]));
+        match utf8_to_f64!(& data[0 .. didx]){
+            Ok(datum) => sample.push(datum),
+            Err(_) => *err = BS_Error::DatumDropped, // drop data point
+        }
     }
     return Ok(sample);
 }
@@ -105,4 +121,3 @@ pub fn bootstrap_mean(sample: Vec<f64>) -> Vec<f64>{
         Err(_) => panic!("un-dropped arc reference")
     }
 }
-
