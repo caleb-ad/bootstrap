@@ -15,9 +15,23 @@ use rand::Rng;
 
 const BS_BUFSIZE: usize = 1000;
 const BS_DATASIZE: usize = 100;
+
+/// scales number of threads with amount of data to process, does not dictate
+/// amount of data each thread processes
 const BS_DATA_PER_THREAD: usize = 10000;
+
+/// defined as resample_size / sample_size
 const BS_RESAMPLE_RATIO: f32 = 0.5;
-const BS_RESAMPLE_AMT: i32 = 100;
+
+/// the minimum number of resamples to do
+const BS_RESAMPLE_AMT: i32 = 100000;
+
+// evolves an intermediate step with a new value in iterative statistic calculations
+type bs_iter_evolve = fn(f64, f64) -> f64;
+// finalizes an intermediate value for iterative statistic calculations
+type bs_iter_finalize = fn(f64, f64) -> f64;
+// computes a statistic from sample
+type bs_compute = fn(& Vec<f64>) -> f64;
 
 /// use str::from_utf8 and str::parse to attempt conversion
 /// returns Result::Err on failure
@@ -119,5 +133,54 @@ pub fn bootstrap_mean(sample: Vec<f64>) -> Vec<f64>{
     return match Arc::try_unwrap(bs_distribution){
         Ok(vec_in_mut) => vec_in_mut.into_inner().unwrap(),
         Err(_) => panic!("un-dropped arc reference")
+    }
+}
+
+
+/// sample being moved, and consumed, isn't desirable behavior because bootstrapping
+/// the same sample multiple times for different statistics is a common use pattern.
+/// it could be prevented by copying or by using atomic pointers.
+///
+/// mean, max, and min could be calculated with a function like the one below
+pub fn bootstrap_iterative(sample: Vec<f64>, evolve: bs_iter_evolve, finalize: bs_iter_finalize) -> Result<Vec<f64>, String>
+{
+    // wrap sample in Arc so it can be distributed among threads
+    let arc_sample = Arc::<Vec<f64>>::from(sample);
+    // create thread safe data storage
+    let mut bs_dist: Arc<Mutex<Vec<f64>>> = Arc::from(Mutex::from(Vec::new()));
+    // keep track of threads
+    let mut threads = Vec::<JoinHandle<()>>::new();
+
+    // create threads
+    for _ in 0 .. max(arc_sample.len() / BS_DATA_PER_THREAD, 15){
+        let thread_arc_sample = arc_sample.clone();
+        let thread_bs_dist = bs_dist.clone();
+        threads.push( spawn(move || -> () {
+
+            let mut rnd_gen = rand::thread_rng();
+            for _ in 0 .. BS_RESAMPLE_AMT{
+
+                let mut intm: f64 = 0.0;
+                let resample_size: usize = (BS_RESAMPLE_RATIO * (thread_arc_sample.len() as f32)).floor() as usize;
+                for _ in 0 .. resample_size{
+                    intm += evolve(intm, thread_arc_sample[rnd_gen.gen::<usize>()])
+                }
+                // thread panics if mutex is poisoned
+                thread_bs_dist.lock().unwrap().push(finalize(intm, resample_size as f64));
+            }
+        })
+        )
+    }
+
+    for thread in threads{
+        match thread.join(){
+            Err(msg) => return Err(format!("child failed to join; {:?}", msg)),
+            _ => continue
+        }
+    }
+
+    return match Arc::try_unwrap(bs_dist){
+        Ok(vec_in_mut) => Ok(vec_in_mut.into_inner().unwrap()),
+        Err(msg) => Err(format!("undropped arc reference: {:?}", msg))
     }
 }
